@@ -15,48 +15,55 @@ const bot = new Telegraf(BOT_TOKEN);
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+// آدرس عمومی ربات روی Render
+const PUBLIC_URL = process.env.PUBLIC_URL || `https://your-app.onrender.com`;
+
 // ==================== تنظیمات زرین‌پال ====================
 const ZARINPAL_MERCHANT_ID = process.env.ZARINPAL_MERCHANT_ID || 'YOUR_MERCHANT_ID';
 const ZARINPAL_SANDBOX = process.env.ZARINPAL_SANDBOX === 'true' || true;
-const ZARINPAL_CALLBACK_URL = process.env.ZARINPAL_CALLBACK_URL || 'https://your-app.onrender.com/zarinpal/callback';
+const ZARINPAL_CALLBACK_URL = process.env.ZARINPAL_CALLBACK_URL || `${PUBLIC_URL}/zarinpal/callback`;
 const PREMIUM_PRICE = 50000;
 
 const DOWNLOAD_DIR = path.join(__dirname, 'downloads');
 if (!fs.existsSync(DOWNLOAD_DIR)) fs.mkdirSync(DOWNLOAD_DIR);
 
+// پوشه‌ی فایل‌های عمومی برای لینک دائمی
+const PUBLIC_DIR = path.join(__dirname, 'public_files');
+if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR);
+
 const SUPPORT_ID = '@botboshtibani';
+const SUPER_ADMIN_ID = 7104735364;
 
-// ==================== آیدی عددی ادمین اصلی (فقط خودت) ====================
-const SUPER_ADMIN_ID = 7104735364; // اینجا فقط آیدی خودت رو بذار
-
-// ==================== ذخیره‌سازی کاربران پرمیوم در فایل ====================
+// ==================== ذخیره‌سازی کاربران پرمیوم ====================
 const PREMIUM_FILE = path.join(__dirname, 'premium_users.json');
 
 function loadPremiumUsers() {
     if (fs.existsSync(PREMIUM_FILE)) {
         try {
             const data = fs.readFileSync(PREMIUM_FILE, 'utf8');
-            return new Set(JSON.parse(data));
+            const parsed = JSON.parse(data);
+            // تبدیل به Map برای ذخیره اسم و آیدی
+            return new Map(Object.entries(parsed));
         } catch (e) {
-            console.error('خطا در خواندن فایل کاربران پرمیوم:', e);
-            return new Set();
+            return new Map();
         }
     }
-    return new Set();
+    return new Map();
 }
 
-function savePremiumUsers(usersSet) {
+function savePremiumUsers(usersMap) {
     try {
-        fs.writeFileSync(PREMIUM_FILE, JSON.stringify([...usersSet]));
+        const obj = Object.fromEntries(usersMap);
+        fs.writeFileSync(PREMIUM_FILE, JSON.stringify(obj, null, 2));
     } catch (e) {
-        console.error('خطا در ذخیره‌سازی کاربران پرمیوم:', e);
+        console.error('خطا در ذخیره‌سازی:', e);
     }
 }
 
 let premiumUsers = loadPremiumUsers();
 
 function isPremium(userId) {
-    return userId === SUPER_ADMIN_ID || premiumUsers.has(userId);
+    return userId === SUPER_ADMIN_ID || premiumUsers.has(String(userId));
 }
 
 function isSuperAdmin(userId) {
@@ -67,6 +74,10 @@ const userSessions = new Map();
 
 // ==================== وب‌سرور ====================
 app.get('/', (req, res) => res.send('🤖 ربات فعال است!'));
+
+// سرو کردن فایل‌های عمومی برای لینک دائمی
+app.use('/files', express.static(PUBLIC_DIR));
+
 app.listen(PORT, '0.0.0.0', () => console.log(`🌐 وب‌سرور روی پورت ${PORT} روشن شد.`));
 
 // ==================== منوی اصلی ====================
@@ -92,7 +103,6 @@ function mainMenu(userId) {
         Markup.button.callback('🐛 گزارش خطا', 'report_bug')
     ]);
 
-    // فقط برای ادمین اصلی: دکمه پنل مخفی
     if (isSuperAdmin(userId)) {
         keyboard.push([Markup.button.callback('👑 پنل مدیریت (مخفی)', 'admin_panel')]);
     }
@@ -105,16 +115,15 @@ bot.start((ctx) => {
     ctx.reply('🎯 به ربات همه‌کاره خوش اومدی!\n\n📌 یکی از گزینه‌ها رو انتخاب کن:', mainMenu(ctx.from.id));
 });
 
-// ==================== پنل ادمین مخفی ====================
+// ==================== پنل ادمین ====================
 bot.action('admin_panel', (ctx) => {
     if (!isSuperAdmin(ctx.from.id)) {
         return ctx.answerCbQuery('❌ این بخش برای شما در دسترس نیست.');
     }
-    const count = premiumUsers.size;
     ctx.reply(
         `👑 **پنل مدیریت مخفی**\n\n` +
         `🆔 آیدی عددی شما: \`${ctx.from.id}\`\n` +
-        `👥 تعداد کاربران پرمیوم: **${count}**\n\n` +
+        `👥 تعداد کاربران پرمیوم: **${premiumUsers.size}**\n\n` +
         `از دکمه‌های زیر استفاده کن:`,
         {
             parse_mode: 'Markdown',
@@ -131,7 +140,12 @@ bot.action('admin_panel', (ctx) => {
 bot.action('admin_add_premium', (ctx) => {
     if (!isSuperAdmin(ctx.from.id)) return;
     userSessions.set(ctx.from.id, { mode: 'admin_add_premium' });
-    ctx.reply('🆔 آیدی عددی کاربری که می‌خوای پرمیوم بشه رو بفرست:');
+    ctx.reply(
+        '🆔 **آیدی عددی کاربر رو بفرست.**\n\n' +
+        'مثال: `7104735364`\n\n' +
+        '📌 نکته: بعد از فرستادن آیدی، ازش می‌خوام اسمش رو هم بفرسته.',
+        { parse_mode: 'Markdown' }
+    );
 });
 
 bot.action('admin_remove_premium', (ctx) => {
@@ -145,8 +159,15 @@ bot.action('admin_list_premium', (ctx) => {
     if (premiumUsers.size === 0) {
         return ctx.reply('📋 هنوز هیچ کاربر پرمیومی ثبت نشده.');
     }
-    const list = [...premiumUsers].map((id, i) => `${i + 1}. \`${id}\``).join('\n');
-    ctx.reply(`📋 **لیست کاربران پرمیوم (${premiumUsers.size} نفر):**\n\n${list}`, { parse_mode: 'Markdown' });
+    
+    let list = `📋 **لیست کاربران پرمیوم (${premiumUsers.size} نفر):**\n\n`;
+    let index = 1;
+    for (const [userId, userName] of premiumUsers) {
+        list += `${index}. 👤 **${userName}**\n   🆔 \`${userId}\`\n\n`;
+        index++;
+    }
+    
+    ctx.reply(list, { parse_mode: 'Markdown' });
 });
 
 bot.action('admin_back', (ctx) => {
@@ -154,7 +175,7 @@ bot.action('admin_back', (ctx) => {
     ctx.reply('🏠 به منوی اصلی برگشتی.', mainMenu(ctx.from.id));
 });
 
-// ==================== سایر دکمه‌ها ====================
+// ==================== دکمه‌های عادی ====================
 bot.action('convert_format', (ctx) => {
     userSessions.set(ctx.from.id, { mode: 'convert_format' });
     ctx.reply('🔄 فایل رو بفرست.');
@@ -214,7 +235,9 @@ bot.action('verify_payment', async (ctx) => {
     try {
         const verified = await verifyPayment(authority, PREMIUM_PRICE);
         if (verified) {
-            premiumUsers.add(ctx.from.id);
+            // ذخیره با اسم کاربر
+            const userName = ctx.from.first_name + (ctx.from.last_name ? ' ' + ctx.from.last_name : '');
+            premiumUsers.set(String(ctx.from.id), userName);
             savePremiumUsers(premiumUsers);
             await ctx.reply('✅ پرداخت با موفقیت تأیید شد! حالا به قابلیت‌های پولی دسترسی داری.');
         } else {
@@ -271,25 +294,46 @@ bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const session = userSessions.get(userId) || {};
 
-    // --- پنل ادمین: افزودن پرمیوم ---
+    // --- ادمین: دریافت آیدی برای افزودن پرمیوم ---
     if (session.mode === 'admin_add_premium' && isSuperAdmin(userId)) {
-        const targetId = parseInt(text.trim());
-        if (isNaN(targetId)) return ctx.reply('❌ آیدی عددی معتبر نیست.');
-        premiumUsers.add(targetId);
+        const targetId = text.trim();
+        if (!/^\d+$/.test(targetId)) return ctx.reply('❌ آیدی عددی معتبر نیست. فقط عدد بفرست.');
+        
+        // مرحله بعد: دریافت اسم
+        userSessions.set(userId, { mode: 'admin_add_premium_name', targetId });
+        await ctx.reply(`✅ آیدی \`${targetId}\` دریافت شد.\n\n👤 حالا **اسم** این کاربر رو بفرست:`, { parse_mode: 'Markdown' });
+        return;
+    }
+
+    // --- ادمین: دریافت اسم برای افزودن پرمیوم ---
+    if (session.mode === 'admin_add_premium_name' && isSuperAdmin(userId)) {
+        const userName = text.trim();
+        const targetId = session.targetId;
+        
+        premiumUsers.set(targetId, userName);
         savePremiumUsers(premiumUsers);
-        await ctx.reply(`✅ کاربر \`${targetId}\` به لیست پرمیوم اضافه شد.`, { parse_mode: 'Markdown' });
+        
+        await ctx.reply(
+            `✅ کاربر با موفقیت اضافه شد:\n\n` +
+            `👤 اسم: **${userName}**\n` +
+            `🆔 آیدی: \`${targetId}\`\n\n` +
+            `👥 تعداد کل کاربران پرمیوم: **${premiumUsers.size}**`,
+            { parse_mode: 'Markdown' }
+        );
         userSessions.delete(userId);
         return;
     }
 
-    // --- پنل ادمین: حذف پرمیوم ---
+    // --- ادمین: حذف پرمیوم ---
     if (session.mode === 'admin_remove_premium' && isSuperAdmin(userId)) {
-        const targetId = parseInt(text.trim());
-        if (isNaN(targetId)) return ctx.reply('❌ آیدی عددی معتبر نیست.');
+        const targetId = text.trim();
+        if (!/^\d+$/.test(targetId)) return ctx.reply('❌ آیدی عددی معتبر نیست.');
+        
         if (premiumUsers.has(targetId)) {
+            const userName = premiumUsers.get(targetId);
             premiumUsers.delete(targetId);
             savePremiumUsers(premiumUsers);
-            await ctx.reply(`✅ کاربر \`${targetId}\` از لیست پرمیوم حذف شد.`, { parse_mode: 'Markdown' });
+            await ctx.reply(`✅ کاربر **${userName}** با آیدی \`${targetId}\` از لیست پرمیوم حذف شد.`, { parse_mode: 'Markdown' });
         } else {
             await ctx.reply('❌ این کاربر توی لیست پرمیوم نیست.');
         }
@@ -326,7 +370,7 @@ bot.on('text', async (ctx) => {
     }
 });
 
-// ==================== مدیریت فایل‌ها و عکس‌ها ====================
+// ==================== مدیریت فایل‌ها ====================
 bot.on(['photo', 'document', 'video', 'audio'], async (ctx) => {
     const userId = ctx.from.id;
     const session = userSessions.get(userId) || {};
@@ -360,15 +404,46 @@ bot.on(['photo', 'document', 'video', 'audio'], async (ctx) => {
         return;
     }
 
-    // --- فایل به QR ---
+    // --- فایل به QR (با لینک دائمی) ---
     if (session.mode === 'file_to_qr') {
         const fileId = ctx.message.document?.file_id || ctx.message.video?.file_id || ctx.message.audio?.file_id || (ctx.message.photo && ctx.message.photo[ctx.message.photo.length - 1].file_id);
         if (!fileId) return ctx.reply('❌ فایل پشتیبانی نمی‌شه.');
 
         try {
+            const statusMsg = await ctx.reply('⏳ در حال آپلود فایل و ساخت لینک دائمی...');
+            
+            // دریافت لینک فایل از تلگرام
             const fileLink = await ctx.telegram.getFileLink(fileId);
-            const qrBuffer = await qr.toBuffer(fileLink.href);
-            await ctx.replyWithPhoto({ source: qrBuffer }, { caption: '✅ لینک دانلود فایل به QR تبدیل شد!' });
+            
+            // دانلود فایل از تلگرام
+            const response = await fetch(fileLink.href);
+            const buffer = Buffer.from(await response.arrayBuffer());
+            
+            // ساخت اسم یکتا برای فایل
+            const ext = fileLink.href.split('.').pop().split('?')[0] || 'bin';
+            const fileName = `file_${userId}_${Date.now()}.${ext}`;
+            const filePath = path.join(PUBLIC_DIR, fileName);
+            
+            // ذخیره فایل در سرور
+            fs.writeFileSync(filePath, buffer);
+            
+            // ساخت لینک دائمی
+            const permanentUrl = `${PUBLIC_URL}/files/${fileName}`;
+            
+            // ساخت QR از لینک دائمی
+            const qrBuffer = await qr.toBuffer(permanentUrl);
+            
+            await ctx.replyWithPhoto(
+                { source: qrBuffer },
+                { 
+                    caption: `✅ **لینک دائمی فایل ساخته شد!**\n\n` +
+                             `🔗 لینک:\n${permanentUrl}\n\n` +
+                             `📌 این لینک دائمی است و منقضی نمی‌شه.`,
+                    parse_mode: 'Markdown'
+                }
+            );
+            
+            await ctx.telegram.deleteMessage(ctx.chat.id, statusMsg.message_id);
         } catch (error) {
             console.error(error);
             await ctx.reply('❌ خطا در ساخت QR برای فایل.');
