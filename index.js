@@ -15,19 +15,18 @@ const bot = new Telegraf(BOT_TOKEN);
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// آدرس عمومی ربات روی Render
+// آدرس عمومی ربات روی Render (توی Environment Variables تنظیم کن)
 const PUBLIC_URL = process.env.PUBLIC_URL || `https://your-app.onrender.com`;
 
 // ==================== تنظیمات زرین‌پال ====================
 const ZARINPAL_MERCHANT_ID = process.env.ZARINPAL_MERCHANT_ID || 'YOUR_MERCHANT_ID';
 const ZARINPAL_SANDBOX = process.env.ZARINPAL_SANDBOX === 'true' || true;
 const ZARINPAL_CALLBACK_URL = process.env.ZARINPAL_CALLBACK_URL || `${PUBLIC_URL}/zarinpal/callback`;
-const PREMIUM_PRICE = 50000;
+const PREMIUM_PRICE = 50000; // تومان
 
 const DOWNLOAD_DIR = path.join(__dirname, 'downloads');
 if (!fs.existsSync(DOWNLOAD_DIR)) fs.mkdirSync(DOWNLOAD_DIR);
 
-// پوشه‌ی فایل‌های عمومی برای لینک دائمی
 const PUBLIC_DIR = path.join(__dirname, 'public_files');
 if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR);
 
@@ -41,23 +40,16 @@ function loadPremiumUsers() {
     if (fs.existsSync(PREMIUM_FILE)) {
         try {
             const data = fs.readFileSync(PREMIUM_FILE, 'utf8');
-            const parsed = JSON.parse(data);
-            // تبدیل به Map برای ذخیره اسم و آیدی
-            return new Map(Object.entries(parsed));
-        } catch (e) {
-            return new Map();
-        }
+            return new Map(Object.entries(JSON.parse(data)));
+        } catch (e) { return new Map(); }
     }
     return new Map();
 }
 
 function savePremiumUsers(usersMap) {
     try {
-        const obj = Object.fromEntries(usersMap);
-        fs.writeFileSync(PREMIUM_FILE, JSON.stringify(obj, null, 2));
-    } catch (e) {
-        console.error('خطا در ذخیره‌سازی:', e);
-    }
+        fs.writeFileSync(PREMIUM_FILE, JSON.stringify(Object.fromEntries(usersMap), null, 2));
+    } catch (e) { console.error('خطا در ذخیره‌سازی:', e); }
 }
 
 let premiumUsers = loadPremiumUsers();
@@ -77,6 +69,36 @@ app.get('/', (req, res) => res.send('🤖 ربات فعال است!'));
 
 // سرو کردن فایل‌های عمومی برای لینک دائمی
 app.use('/files', express.static(PUBLIC_DIR));
+
+// ==================== کالبک زرین‌پال ====================
+app.get('/zarinpal/callback', async (req, res) => {
+    const { Authority, Status } = req.query;
+    
+    if (Status !== 'OK') {
+        return res.send('❌ پرداخت لغو شد.');
+    }
+
+    try {
+        const verified = await verifyPayment(Authority, PREMIUM_PRICE);
+        if (verified) {
+            // پیدا کردن کاربر از روی Authority (ذخیره شده در سشن)
+            for (const [userId, session] of userSessions) {
+                if (session.payment_authority === Authority) {
+                    const userName = session.user_name || 'کاربر';
+                    premiumUsers.set(String(userId), userName);
+                    savePremiumUsers(premiumUsers);
+                    res.send('✅ پرداخت با موفقیت انجام شد! حالا به ربات برگردید.');
+                    return;
+                }
+            }
+            res.send('✅ پرداخت تأیید شد!');
+        } else {
+            res.send('❌ پرداخت تأیید نشد.');
+        }
+    } catch (e) {
+        res.send('❌ خطا در تأیید پرداخت.');
+    }
+});
 
 app.listen(PORT, '0.0.0.0', () => console.log(`🌐 وب‌سرور روی پورت ${PORT} روشن شد.`));
 
@@ -117,35 +139,22 @@ bot.start((ctx) => {
 
 // ==================== پنل ادمین ====================
 bot.action('admin_panel', (ctx) => {
-    if (!isSuperAdmin(ctx.from.id)) {
-        return ctx.answerCbQuery('❌ این بخش برای شما در دسترس نیست.');
-    }
+    if (!isSuperAdmin(ctx.from.id)) return ctx.answerCbQuery('❌ این بخش برای شما در دسترس نیست.');
     ctx.reply(
-        `👑 **پنل مدیریت مخفی**\n\n` +
-        `🆔 آیدی عددی شما: \`${ctx.from.id}\`\n` +
-        `👥 تعداد کاربران پرمیوم: **${premiumUsers.size}**\n\n` +
-        `از دکمه‌های زیر استفاده کن:`,
-        {
-            parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard([
-                [Markup.button.callback('➕ افزودن کاربر پرمیوم', 'admin_add_premium')],
-                [Markup.button.callback('➖ حذف کاربر پرمیوم', 'admin_remove_premium')],
-                [Markup.button.callback('📋 لیست کاربران پرمیوم', 'admin_list_premium')],
-                [Markup.button.callback('🔙 بازگشت به منو', 'admin_back')]
-            ])
-        }
+        `👑 **پنل مدیریت مخفی**\n\n🆔 آیدی عددی شما: \`${ctx.from.id}\`\n👥 تعداد کاربران پرمیوم: **${premiumUsers.size}**\n\nاز دکمه‌های زیر استفاده کن:`,
+        { parse_mode: 'Markdown', ...Markup.inlineKeyboard([
+            [Markup.button.callback('➕ افزودن کاربر پرمیوم', 'admin_add_premium')],
+            [Markup.button.callback('➖ حذف کاربر پرمیوم', 'admin_remove_premium')],
+            [Markup.button.callback('📋 لیست کاربران پرمیوم', 'admin_list_premium')],
+            [Markup.button.callback('🔙 بازگشت به منو', 'admin_back')]
+        ])}
     );
 });
 
 bot.action('admin_add_premium', (ctx) => {
     if (!isSuperAdmin(ctx.from.id)) return;
     userSessions.set(ctx.from.id, { mode: 'admin_add_premium' });
-    ctx.reply(
-        '🆔 **آیدی عددی کاربر رو بفرست.**\n\n' +
-        'مثال: `7104735364`\n\n' +
-        '📌 نکته: بعد از فرستادن آیدی، ازش می‌خوام اسمش رو هم بفرسته.',
-        { parse_mode: 'Markdown' }
-    );
+    ctx.reply('🆔 **آیدی عددی کاربر رو بفرست.**\n\nمثال: `7104735364`\n\n📌 نکته: بعد از فرستادن آیدی، ازش می‌خوام اسمش رو هم بفرسته.', { parse_mode: 'Markdown' });
 });
 
 bot.action('admin_remove_premium', (ctx) => {
@@ -156,17 +165,13 @@ bot.action('admin_remove_premium', (ctx) => {
 
 bot.action('admin_list_premium', (ctx) => {
     if (!isSuperAdmin(ctx.from.id)) return;
-    if (premiumUsers.size === 0) {
-        return ctx.reply('📋 هنوز هیچ کاربر پرمیومی ثبت نشده.');
-    }
-    
+    if (premiumUsers.size === 0) return ctx.reply('📋 هنوز هیچ کاربر پرمیومی ثبت نشده.');
     let list = `📋 **لیست کاربران پرمیوم (${premiumUsers.size} نفر):**\n\n`;
     let index = 1;
     for (const [userId, userName] of premiumUsers) {
         list += `${index}. 👤 **${userName}**\n   🆔 \`${userId}\`\n\n`;
         index++;
     }
-    
     ctx.reply(list, { parse_mode: 'Markdown' });
 });
 
@@ -187,17 +192,13 @@ bot.action('remove_metadata', (ctx) => {
 });
 
 bot.action('create_qr', (ctx) => {
-    if (!isPremium(ctx.from.id)) {
-        return ctx.answerCbQuery('❌ این قابلیت پولی است! برای خرید اشتراک دکمه «خرید اشتراک پرمیوم» رو بزن.', { show_alert: true });
-    }
+    if (!isPremium(ctx.from.id)) return ctx.answerCbQuery('❌ این قابلیت پولی است! برای خرید اشتراک دکمه «خرید اشتراک پرمیوم» رو بزن.', { show_alert: true });
     userSessions.set(ctx.from.id, { mode: 'create_qr' });
     ctx.reply('📱 لینک یا متنی که می‌خوای QR بشه رو بفرست.');
 });
 
 bot.action('read_qr', (ctx) => {
-    if (!isPremium(ctx.from.id)) {
-        return ctx.answerCbQuery('❌ این قابلیت پولی است!', { show_alert: true });
-    }
+    if (!isPremium(ctx.from.id)) return ctx.answerCbQuery('❌ این قابلیت پولی است!', { show_alert: true });
     userSessions.set(ctx.from.id, { mode: 'read_qr' });
     ctx.reply('📷 عکس QR کد رو بفرست.');
 });
@@ -214,12 +215,12 @@ bot.action('convert_units', (ctx) => {
 
 bot.action('buy_premium', async (ctx) => {
     try {
+        const userName = ctx.from.first_name + (ctx.from.last_name ? ' ' + ctx.from.last_name : '');
+        userSessions.set(ctx.from.id, { ...userSessions.get(ctx.from.id), user_name: userName });
+        
         const payUrl = await createPayment(PREMIUM_PRICE, 'خرید اشتراک پرمیوم ربات', ctx.from.id);
         await ctx.reply(
-            `💎 **خرید اشتراک پرمیوم**\n\n` +
-            `💰 مبلغ: ${PREMIUM_PRICE.toLocaleString()} تومان\n` +
-            `🔗 برای پرداخت روی لینک زیر کلیک کن:\n${payUrl}\n\n` +
-            `⚠️ بعد از پرداخت، به ربات برگرد و دکمه «بررسی پرداخت» رو بزن.`,
+            `💎 **خرید اشتراک پرمیوم**\n\n💰 مبلغ: ${PREMIUM_PRICE.toLocaleString()} تومان\n🔗 برای پرداخت روی لینک زیر کلیک کن:\n${payUrl}\n\n⚠️ بعد از پرداخت، به ربات برگرد و دکمه «بررسی پرداخت» رو بزن.`,
             { parse_mode: 'Markdown' }
         );
     } catch (error) {
@@ -231,11 +232,9 @@ bot.action('buy_premium', async (ctx) => {
 bot.action('verify_payment', async (ctx) => {
     const authority = userSessions.get(ctx.from.id)?.payment_authority;
     if (!authority) return ctx.reply('❌ ابتدا پرداخت رو انجام بده.');
-
     try {
         const verified = await verifyPayment(authority, PREMIUM_PRICE);
         if (verified) {
-            // ذخیره با اسم کاربر
             const userName = ctx.from.first_name + (ctx.from.last_name ? ' ' + ctx.from.last_name : '');
             premiumUsers.set(String(ctx.from.id), userName);
             savePremiumUsers(premiumUsers);
@@ -298,8 +297,6 @@ bot.on('text', async (ctx) => {
     if (session.mode === 'admin_add_premium' && isSuperAdmin(userId)) {
         const targetId = text.trim();
         if (!/^\d+$/.test(targetId)) return ctx.reply('❌ آیدی عددی معتبر نیست. فقط عدد بفرست.');
-        
-        // مرحله بعد: دریافت اسم
         userSessions.set(userId, { mode: 'admin_add_premium_name', targetId });
         await ctx.reply(`✅ آیدی \`${targetId}\` دریافت شد.\n\n👤 حالا **اسم** این کاربر رو بفرست:`, { parse_mode: 'Markdown' });
         return;
@@ -308,18 +305,9 @@ bot.on('text', async (ctx) => {
     // --- ادمین: دریافت اسم برای افزودن پرمیوم ---
     if (session.mode === 'admin_add_premium_name' && isSuperAdmin(userId)) {
         const userName = text.trim();
-        const targetId = session.targetId;
-        
-        premiumUsers.set(targetId, userName);
+        premiumUsers.set(session.targetId, userName);
         savePremiumUsers(premiumUsers);
-        
-        await ctx.reply(
-            `✅ کاربر با موفقیت اضافه شد:\n\n` +
-            `👤 اسم: **${userName}**\n` +
-            `🆔 آیدی: \`${targetId}\`\n\n` +
-            `👥 تعداد کل کاربران پرمیوم: **${premiumUsers.size}**`,
-            { parse_mode: 'Markdown' }
-        );
+        await ctx.reply(`✅ کاربر با موفقیت اضافه شد:\n\n👤 اسم: **${userName}**\n🆔 آیدی: \`${session.targetId}\`\n\n👥 تعداد کل کاربران پرمیوم: **${premiumUsers.size}**`, { parse_mode: 'Markdown' });
         userSessions.delete(userId);
         return;
     }
@@ -328,7 +316,6 @@ bot.on('text', async (ctx) => {
     if (session.mode === 'admin_remove_premium' && isSuperAdmin(userId)) {
         const targetId = text.trim();
         if (!/^\d+$/.test(targetId)) return ctx.reply('❌ آیدی عددی معتبر نیست.');
-        
         if (premiumUsers.has(targetId)) {
             const userName = premiumUsers.get(targetId);
             premiumUsers.delete(targetId);
@@ -359,7 +346,6 @@ bot.on('text', async (ctx) => {
             const match = lower.match(/(\d+(\.\d+)?)/);
             if (!match) throw new Error();
             const num = parseFloat(match[1]);
-
             if (lower.includes('کیلوگرم') && lower.includes('گرم')) await ctx.reply(`📊 ${num} کیلوگرم = ${num * 1000} گرم`);
             else if (lower.includes('متر') && lower.includes('سانتی‌متر')) await ctx.reply(`📊 ${num} متر = ${num * 100} سانتی‌متر`);
             else if (lower.includes('کیلومتر') && lower.includes('متر')) await ctx.reply(`📊 ${num} کیلومتر = ${num * 1000} متر`);
@@ -404,7 +390,7 @@ bot.on(['photo', 'document', 'video', 'audio'], async (ctx) => {
         return;
     }
 
-    // --- فایل به QR (با لینک دائمی) ---
+    // --- فایل به QR (با لینک دائمی و دانلود صحیح) ---
     if (session.mode === 'file_to_qr') {
         const fileId = ctx.message.document?.file_id || ctx.message.video?.file_id || ctx.message.audio?.file_id || (ctx.message.photo && ctx.message.photo[ctx.message.photo.length - 1].file_id);
         if (!fileId) return ctx.reply('❌ فایل پشتیبانی نمی‌شه.');
@@ -412,35 +398,33 @@ bot.on(['photo', 'document', 'video', 'audio'], async (ctx) => {
         try {
             const statusMsg = await ctx.reply('⏳ در حال آپلود فایل و ساخت لینک دائمی...');
             
-            // دریافت لینک فایل از تلگرام
             const fileLink = await ctx.telegram.getFileLink(fileId);
             
-            // دانلود فایل از تلگرام
-            const response = await fetch(fileLink.href);
-            const buffer = Buffer.from(await response.arrayBuffer());
+            // استفاده از axios با responseType: 'stream' برای دانلود صحیح فایل
+            const response = await axios({
+                url: fileLink.href,
+                method: 'GET',
+                responseType: 'stream'
+            });
             
-            // ساخت اسم یکتا برای فایل
             const ext = fileLink.href.split('.').pop().split('?')[0] || 'bin';
             const fileName = `file_${userId}_${Date.now()}.${ext}`;
             const filePath = path.join(PUBLIC_DIR, fileName);
             
-            // ذخیره فایل در سرور
-            fs.writeFileSync(filePath, buffer);
+            const writer = fs.createWriteStream(filePath);
+            response.data.pipe(writer);
             
-            // ساخت لینک دائمی
+            await new Promise((resolve, reject) => {
+                writer.on('finish', resolve);
+                writer.on('error', reject);
+            });
+            
             const permanentUrl = `${PUBLIC_URL}/files/${fileName}`;
-            
-            // ساخت QR از لینک دائمی
             const qrBuffer = await qr.toBuffer(permanentUrl);
             
             await ctx.replyWithPhoto(
                 { source: qrBuffer },
-                { 
-                    caption: `✅ **لینک دائمی فایل ساخته شد!**\n\n` +
-                             `🔗 لینک:\n${permanentUrl}\n\n` +
-                             `📌 این لینک دائمی است و منقضی نمی‌شه.`,
-                    parse_mode: 'Markdown'
-                }
+                { caption: `✅ **لینک دائمی فایل ساخته شد!**\n\n🔗 لینک:\n${permanentUrl}\n\n📌 این لینک دائمی است و منقضی نمی‌شه.`, parse_mode: 'Markdown' }
             );
             
             await ctx.telegram.deleteMessage(ctx.chat.id, statusMsg.message_id);
@@ -481,9 +465,10 @@ bot.action(/convert_(.+)/, async (ctx) => {
         const inputPath = path.join(DOWNLOAD_DIR, `input_${userId}`);
         const outputPath = path.join(DOWNLOAD_DIR, `output_${userId}.${targetFormat}`);
 
-        const response = await fetch(fileLink.href);
-        const buffer = Buffer.from(await response.arrayBuffer());
-        fs.writeFileSync(inputPath, buffer);
+        const response = await axios({ url: fileLink.href, method: 'GET', responseType: 'stream' });
+        const writer = fs.createWriteStream(inputPath);
+        response.data.pipe(writer);
+        await new Promise((resolve, reject) => { writer.on('finish', resolve); writer.on('error', reject); });
 
         const ffmpeg = require('fluent-ffmpeg');
         const ffmpegStatic = require('ffmpeg-static');
