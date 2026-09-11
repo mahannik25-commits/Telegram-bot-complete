@@ -1,9 +1,6 @@
 require('dotenv').config();
 const express = require('express');
 const { Telegraf, Markup } = require('telegraf');
-const ytdl = require('@distube/ytdl-core');
-const ffmpeg = require('fluent-ffmpeg');
-const ffmpegStatic = require('ffmpeg-static');
 const qr = require('qrcode');
 const Jimp = require('jimp');
 const jsQR = require('jsqr');
@@ -20,14 +17,25 @@ const bot = new Telegraf(BOT_TOKEN);
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-ffmpeg.setFfmpegPath(ffmpegStatic);
-
 const DOWNLOAD_DIR = path.join(__dirname, 'downloads');
 if (!fs.existsSync(DOWNLOAD_DIR)) {
     fs.mkdirSync(DOWNLOAD_DIR);
 }
 
 const SUPPORT_ID = '@botboshtibani';
+
+// ==================== لیست ادمین‌ها (آیدی عددی تلگرام) ====================
+// هر کسی که آیدیش اینجا باشه، می‌تونه از قابلیت‌های پولی استفاده کنه
+const ADMIN_IDS = [
+    123456789,   // آیدی عددی خودت رو اینجا بذار
+    987654321,   // و هر ادمین دیگه
+];
+
+function isAdmin(userId) {
+    return ADMIN_IDS.includes(userId);
+}
+
+// ==================== ذخیره کاربران فعال ====================
 const userSessions = new Map();
 
 // ==================== وب‌سرور برای Render ====================
@@ -40,33 +48,39 @@ app.listen(PORT, '0.0.0.0', () => {
 });
 
 // ==================== منوی اصلی ====================
-function mainMenu() {
-    return Markup.inlineKeyboard([
-        [Markup.button.callback('🎬 دانلود ویدیو', 'video'), Markup.button.callback('🎵 دانلود صدا', 'audio')],
+function mainMenu(userId) {
+    const keyboard = [
         [Markup.button.callback('🔄 تبدیل فرمت', 'convert_format')],
         [Markup.button.callback('🖼️ حذف لوکیشن عکس', 'remove_metadata')],
-        [Markup.button.callback('📱 ساخت QR', 'create_qr'), Markup.button.callback('📷 خواندن QR', 'read_qr')],
+        [
+            Markup.button.callback('📱 ساخت QR 🔒', 'create_qr'),
+            Markup.button.callback('📷 خواندن QR 🔒', 'read_qr')
+        ],
         [Markup.button.callback('📊 تبدیل واحد', 'convert_units')],
-        [Markup.button.callback('💬 پشتیبانی', 'support'), Markup.button.callback('📝 بازخورد', 'feedback'), Markup.button.callback('🐛 گزارش خطا', 'report_bug')]
-    ]);
+        [
+            Markup.button.callback('💬 پشتیبانی', 'support'),
+            Markup.button.callback('📝 بازخورد', 'feedback'),
+            Markup.button.callback('🐛 گزارش خطا', 'report_bug')
+        ]
+    ];
+
+    // اگه ادمین باشه، نشون می‌دیم که دسترسی داره
+    if (isAdmin(userId)) {
+        keyboard.push([Markup.button.callback('👑 پنل ادمین', 'admin_panel')]);
+    }
+
+    return Markup.inlineKeyboard(keyboard);
 }
 
 // ==================== شروع ====================
 bot.start((ctx) => {
-    ctx.reply('🎯 به ربات همه‌کاره خوش اومدی!\n\n📌 (برای استفاده از مینی اپ به فیلترشکن وصل شو وگرنه کار نمیکنه)یکی از گزینه‌ها رو انتخاب کن:', mainMenu());
+    ctx.reply(
+        '🎯 به ربات همه‌کاره خوش اومدی!\n\n📌 یکی از گزینه‌ها رو انتخاب کن:',
+        mainMenu(ctx.from.id)
+    );
 });
 
 // ==================== مدیریت دکمه‌ها ====================
-bot.action('video', (ctx) => {
-    userSessions.set(ctx.from.id, { mode: 'video' });
-    ctx.reply('📎 لینک یوتیوب رو بفرست:');
-});
-
-bot.action('audio', (ctx) => {
-    userSessions.set(ctx.from.id, { mode: 'audio' });
-    ctx.reply('📎 لینک یوتیوب رو بفرست:');
-});
-
 bot.action('convert_format', (ctx) => {
     userSessions.set(ctx.from.id, { mode: 'convert_format' });
     ctx.reply('🔄 فایل رو بفرست.');
@@ -78,11 +92,17 @@ bot.action('remove_metadata', (ctx) => {
 });
 
 bot.action('create_qr', (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+        return ctx.answerCbQuery('❌ این قابلیت پولی است! برای فعال‌سازی با پشتیبانی تماس بگیرید.', { show_alert: true });
+    }
     userSessions.set(ctx.from.id, { mode: 'create_qr' });
     ctx.reply('📱 لینک یا متنی که می‌خوای QR بشه رو بفرست.');
 });
 
 bot.action('read_qr', (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+        return ctx.answerCbQuery('❌ این قابلیت پولی است! برای فعال‌سازی با پشتیبانی تماس بگیرید.', { show_alert: true });
+    }
     userSessions.set(ctx.from.id, { mode: 'read_qr' });
     ctx.reply('📷 عکس QR کد رو بفرست.');
 });
@@ -97,73 +117,31 @@ bot.action(['support', 'feedback', 'report_bug'], (ctx) => {
     userSessions.delete(ctx.from.id);
 });
 
-// ==================== دانلود از یوتیوب ====================
+bot.action('admin_panel', (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+        return ctx.answerCbQuery('❌ شما ادمین نیستید!');
+    }
+    ctx.reply(
+        `👑 پنل ادمین\n\n` +
+        `🆔 آیدی عددی شما: \`${ctx.from.id}\`\n` +
+        `✅ شما به قابلیت‌های پولی دسترسی دارید.`,
+        { parse_mode: 'Markdown' }
+    );
+});
+
+// ==================== مدیریت متن‌ها ====================
 bot.on('text', async (ctx) => {
     const text = ctx.message.text;
     const userId = ctx.from.id;
     const session = userSessions.get(userId) || {};
 
-    if (text.startsWith('http') && (session.mode === 'video' || session.mode === 'audio')) {
-        const isAudio = session.mode === 'audio';
-        const statusMsg = await ctx.reply(`⏳ در حال دریافت ${isAudio ? 'صدا' : 'ویدیو'}...`);
-
-        try {
-            const outputPath = path.join(DOWNLOAD_DIR, `${isAudio ? 'audio' : 'video'}_${userId}.${isAudio ? 'mp3' : 'mp4'}`);
-
-            if (isAudio) {
-                const audioStream = ytdl(text, { filter: 'audioonly', quality: 'highestaudio' });
-                await new Promise((resolve, reject) => {
-                    ffmpeg(audioStream)
-                        .audioBitrate(192)
-                        .toFormat('mp3')
-                        .on('end', resolve)
-                        .on('error', reject)
-                        .save(outputPath);
-                });
-                await ctx.replyWithAudio({ source: outputPath });
-            } else {
-                const videoPath = path.join(DOWNLOAD_DIR, `video_temp_${userId}.mp4`);
-                const audioPath = path.join(DOWNLOAD_DIR, `audio_temp_${userId}.mp4`);
-
-                const videoStream = ytdl(text, { filter: 'videoonly', quality: 'highestvideo' });
-                const audioStream = ytdl(text, { filter: 'audioonly', quality: 'highestaudio' });
-
-                await new Promise((resolve, reject) => {
-                    videoStream.pipe(fs.createWriteStream(videoPath)).on('finish', resolve).on('error', reject);
-                });
-                await new Promise((resolve, reject) => {
-                    audioStream.pipe(fs.createWriteStream(audioPath)).on('finish', resolve).on('error', reject);
-                });
-
-                await new Promise((resolve, reject) => {
-                    ffmpeg()
-                        .input(videoPath)
-                        .input(audioPath)
-                        .outputOptions(['-c:v copy', '-c:a aac'])
-                        .on('end', resolve)
-                        .on('error', reject)
-                        .save(outputPath);
-                });
-
-                fs.unlinkSync(videoPath);
-                fs.unlinkSync(audioPath);
-                await ctx.replyWithVideo({ source: outputPath });
-            }
-
-            if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-            userSessions.delete(userId);
-            await ctx.telegram.deleteMessage(ctx.chat.id, statusMsg.message_id);
-
-        } catch (error) {
-            console.error('Download Error:', error);
-            await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, undefined, `❌ خطا: ${error.message.substring(0, 200)}`);
-            userSessions.delete(userId);
-        }
-        return;
-    }
-
-    // --- ساخت QR ---
+    // --- ساخت QR (فقط ادمین) ---
     if (session.mode === 'create_qr') {
+        if (!isAdmin(userId)) {
+            await ctx.reply('❌ این قابلیت پولی است!');
+            userSessions.delete(userId);
+            return;
+        }
         try {
             const buffer = await qr.toBuffer(text);
             await ctx.replyWithPhoto({ source: buffer }, { caption: '✅ QR کد ساخته شد!' });
@@ -220,8 +198,13 @@ bot.on(['photo', 'document', 'video', 'audio'], async (ctx) => {
         return;
     }
 
-    // --- خواندن QR ---
+    // --- خواندن QR (فقط ادمین) ---
     if (session.mode === 'read_qr' && ctx.message.photo) {
+        if (!isAdmin(userId)) {
+            await ctx.reply('❌ این قابلیت پولی است!');
+            userSessions.delete(userId);
+            return;
+        }
         try {
             const fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
             const fileLink = await ctx.telegram.getFileLink(fileId);
@@ -282,6 +265,11 @@ bot.action(/convert_(.+)/, async (ctx) => {
         const response = await fetch(fileLink.href);
         const buffer = Buffer.from(await response.arrayBuffer());
         fs.writeFileSync(inputPath, buffer);
+
+        // استفاده از ffmpeg-static
+        const ffmpeg = require('fluent-ffmpeg');
+        const ffmpegStatic = require('ffmpeg-static');
+        ffmpeg.setFfmpegPath(ffmpegStatic);
 
         await new Promise((resolve, reject) => {
             ffmpeg(inputPath)
