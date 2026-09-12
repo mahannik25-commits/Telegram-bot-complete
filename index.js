@@ -42,35 +42,34 @@ const FORBIDDEN_WORDS = [
     'khamenei', 'khomeini', 'iranian leader', 'dictator',
 ];
 
-function isPromptSafe(prompt) {
+function isPromptSafe(prompt, userId) {
     const lowerPrompt = prompt.toLowerCase();
-    
-    // چک کردن کلمات ممنوعه
-    for (const word of FORBIDDEN_WORDS) {
-        // برای کلمات چند کلمه‌ای
-        if (word.includes(' ')) {
-            if (lowerPrompt.includes(word)) {
-                return { safe: false, reason: `محتوای نامناسب تشخیص داده شد.` };
-            }
-        } else {
-            // برای کلمات تک‌کلمه‌ای، مرز کلمه رو چک کن
-            const regex = new RegExp(`\\b${word}\\b`, 'i');
-            if (regex.test(lowerPrompt)) {
-                return { safe: false, reason: `کلمه «${word}» مجاز نیست.` };
+
+    // ✅ ادمین اصلی (SUPER_ADMIN_ID) از فیلتر کلمات معاف است
+    if (userId !== SUPER_ADMIN_ID) {
+        for (const word of FORBIDDEN_WORDS) {
+            if (word.includes(' ')) {
+                if (lowerPrompt.includes(word)) {
+                    return { safe: false, reason: `محتوای نامناسب تشخیص داده شد.` };
+                }
+            } else {
+                const regex = new RegExp(`\\b${word}\\b`, 'i');
+                if (regex.test(lowerPrompt)) {
+                    return { safe: false, reason: `کلمه «${word}» مجاز نیست.` };
+                }
             }
         }
     }
-    
-    // چک کردن طول پرامپت
+
+    // این چک‌ها برای همه (حتی ادمین) اجرا می‌شه
     if (prompt.length > 500) {
         return { safe: false, reason: 'پرامپت خیلی طولانیه (حداکثر ۵۰۰ کاراکتر).' };
     }
-    
-    // چک کردن اینکه پرامپت خالی نباشه
+
     if (prompt.trim().length < 3) {
         return { safe: false, reason: 'پرامپت خیلی کوتاهه.' };
     }
-    
+
     return { safe: true };
 }
 
@@ -516,8 +515,8 @@ bot.on('text', async (ctx) => {
             );
         }
         
-        // ====== چک کردن فیلتر اخلاقی ======
-        const safetyCheck = isPromptSafe(prompt);
+        // ====== چک کردن فیلتر اخلاقی (با پاس دادن userId) ======
+        const safetyCheck = isPromptSafe(prompt, userId);
         if (!safetyCheck.safe) {
             return ctx.reply(
                 `🚫 **پرامپت شما رد شد!**\n\n` +
