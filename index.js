@@ -21,9 +21,9 @@ if (!fs.existsSync(DOWNLOAD_DIR)) fs.mkdirSync(DOWNLOAD_DIR);
 const SUPPORT_ID = '@botboshtibani';
 const SUPER_ADMIN_ID = 7104735364;
 
-// ==================== اطلاعات پرداخت کارت‌به‌کارت ====================
+// ==================== اطلاعات پرداخت ====================
 const CARD_NUMBER = '6104 3377 6565 6952';
-const CARD_OWNER = 'مدیر ربات';
+const CARD_OWNER = 'ماهان نیک افروز';
 const PREMIUM_PRICE = 25000;
 
 // ==================== ذخیره‌سازی ====================
@@ -58,6 +58,7 @@ const userSessions = new Map();
 
 // ==================== وب‌سرور ====================
 app.get('/', (req, res) => res.send('🤖 ربات فعال است!'));
+app.get('/health', (req, res) => res.status(200).send('OK'));
 app.listen(PORT, '0.0.0.0', () => console.log(`🌐 وب‌سرور روی پورت ${PORT} روشن شد.`));
 
 // ==================== منوی اصلی ====================
@@ -69,6 +70,7 @@ function mainMenu(userId) {
             Markup.button.callback('📱 ساخت QR ' + (isPremium(userId) ? '✅' : '🔒'), 'create_qr'),
             Markup.button.callback('📷 خواندن QR ' + (isPremium(userId) ? '✅' : '🔒'), 'read_qr')
         ],
+        [Markup.button.callback('🎨 تولید عکس با AI ' + (isPremium(userId) ? '✅' : '🔒'), 'ai_image')],
     ];
 
     if (!isPremium(userId)) {
@@ -112,9 +114,18 @@ bot.action('buy_premium', async (ctx) => {
         {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
+                [Markup.button.callback('📋 کپی شماره کارت', 'copy_card')],
                 [Markup.button.callback('📤 ارسال رسید پرداخت', 'send_receipt')]
             ])
         }
+    );
+});
+
+// ==================== کپی شماره کارت ====================
+bot.action('copy_card', async (ctx) => {
+    await ctx.answerCbQuery(
+        `شماره کارت:\n${CARD_NUMBER}\n\n👆 برای کپی، انگشتت رو روی شماره نگه دار.`,
+        { show_alert: true }
     );
 });
 
@@ -377,6 +388,12 @@ bot.action('read_qr', (ctx) => {
     ctx.reply('📷 عکس QR کد رو بفرست.');
 });
 
+bot.action('ai_image', (ctx) => {
+    if (!isPremium(ctx.from.id)) return ctx.answerCbQuery('❌ این قابلیت پولی است!', { show_alert: true });
+    userSessions.set(ctx.from.id, { mode: 'ai_image' });
+    ctx.reply('🎨 توضیح عکسی که می‌خوای ساخته بشه رو بنویس.\n\nمثال: «یک گربه فضانورد در مریخ»');
+});
+
 bot.action(['support', 'feedback', 'report_bug'], (ctx) => {
     ctx.reply(`💬 آیدی پشتیبانی:\n${SUPPORT_ID}`);
     userSessions.delete(ctx.from.id);
@@ -424,6 +441,34 @@ bot.on('text', async (ctx) => {
             await ctx.replyWithPhoto({ source: buffer }, { caption: '✅ QR کد ساخته شد!' });
         } catch { await ctx.reply('❌ خطا در ساخت QR.'); }
         userSessions.delete(userId);
+        return;
+    }
+
+    // --- تولید عکس با AI ---
+    if (session.mode === 'ai_image') {
+        if (!isPremium(userId)) return ctx.reply('❌ این قابلیت پولی است!');
+        
+        const prompt = text.trim();
+        if (!prompt) return ctx.reply('❌ لطفاً یک توضیح برای عکس بنویس.');
+        
+        const statusMsg = await ctx.reply('🎨 در حال خلق تصویر... (ممکنه چند ثانیه طول بکشه)');
+        
+        try {
+            // استفاده از Pollinations.AI (رایگان و بدون API Key)
+            const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true`;
+            
+            await ctx.replyWithPhoto(
+                { url: imageUrl },
+                { caption: `🎨 **تصویر ساخته شد!**\n\n📝 توضیح: ${prompt}`, parse_mode: 'Markdown' }
+            );
+            
+            userSessions.delete(userId);
+            await ctx.telegram.deleteMessage(ctx.chat.id, statusMsg.message_id);
+        } catch (error) {
+            console.error('AI Image Error:', error);
+            await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, undefined, '❌ خطا در ساخت تصویر. لطفاً دوباره تلاش کن.');
+            userSessions.delete(userId);
+        }
         return;
     }
 });
