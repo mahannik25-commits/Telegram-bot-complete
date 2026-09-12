@@ -26,6 +26,54 @@ const CARD_NUMBER = '6104 3377 6565 6952';
 const CARD_OWNER = 'ماهان نیک افروز';
 const PREMIUM_PRICE = 25000;
 
+// ==================== فیلتر اخلاقی ====================
+const FORBIDDEN_WORDS = [
+    // محتوای جنسی
+    'sex', 'porn', 'nude', 'naked', 'xxx', 'nsfw', 'erotic', 'hentai',
+    'boobs', 'breast', 'penis', 'vagina', 'dick', 'pussy', 'ass', 'anal',
+    // خشونت شدید
+    'kill', 'murder', 'blood', 'gore', 'torture', 'beheading', 'suicide',
+    'weapon', 'gun', 'rifle', 'bomb', 'explosion',
+    // نفرت‌پراکنی
+    'racist', 'nazi', 'hitler', 'terrorist', 'isis', 'jihad',
+    // محتوای غیرقانونی
+    'child porn', 'pedo', 'abuse', 'drugs', 'cocaine', 'heroin', 'meth',
+    // محتوای سیاسی حساس
+    'khamenei', 'khomeini', 'iranian leader', 'dictator',
+];
+
+function isPromptSafe(prompt) {
+    const lowerPrompt = prompt.toLowerCase();
+    
+    // چک کردن کلمات ممنوعه
+    for (const word of FORBIDDEN_WORDS) {
+        // برای کلمات چند کلمه‌ای
+        if (word.includes(' ')) {
+            if (lowerPrompt.includes(word)) {
+                return { safe: false, reason: `محتوای نامناسب تشخیص داده شد.` };
+            }
+        } else {
+            // برای کلمات تک‌کلمه‌ای، مرز کلمه رو چک کن
+            const regex = new RegExp(`\\b${word}\\b`, 'i');
+            if (regex.test(lowerPrompt)) {
+                return { safe: false, reason: `کلمه «${word}» مجاز نیست.` };
+            }
+        }
+    }
+    
+    // چک کردن طول پرامپت
+    if (prompt.length > 500) {
+        return { safe: false, reason: 'پرامپت خیلی طولانیه (حداکثر ۵۰۰ کاراکتر).' };
+    }
+    
+    // چک کردن اینکه پرامپت خالی نباشه
+    if (prompt.trim().length < 3) {
+        return { safe: false, reason: 'پرامپت خیلی کوتاهه.' };
+    }
+    
+    return { safe: true };
+}
+
 // ==================== ذخیره‌سازی ====================
 const PREMIUM_FILE = path.join(__dirname, 'premium_users.json');
 const PENDING_FILE = path.join(__dirname, 'pending_payments.json');
@@ -393,7 +441,8 @@ bot.action('ai_image', (ctx) => {
     userSessions.set(ctx.from.id, { mode: 'ai_image' });
     ctx.reply(
         '🎨 **پرامپت انگلیسی خود را وارد کنید.**\n\n' +
-        '⚠️ این سرویس فقط از پرامپت انگلیسی پشتیبانی می‌کند.\n\n' +
+        '⚠️ این سرویس فقط از پرامپت انگلیسی پشتیبانی می‌کند.\n' +
+        '🚫 محتوای نامناسب رد خواهد شد.\n\n' +
         '📝 مثال:\n' +
         '`A dog astronaut on the moon`'
     );
@@ -449,14 +498,14 @@ bot.on('text', async (ctx) => {
         return;
     }
 
-    // --- تولید عکس با AI (فقط انگلیسی) ---
+    // --- تولید عکس با AI (با فیلتر اخلاقی) ---
     if (session.mode === 'ai_image') {
         if (!isPremium(userId)) return ctx.reply('❌ این قابلیت پولی است!');
         
         const prompt = text.trim();
         if (!prompt) return ctx.reply('❌ لطفاً یک پرامپت بنویس.');
         
-        // چک کردن اینکه پرامپت انگلیسی باشه
+        // چک کردن انگلیسی بودن
         if (/[\u0600-\u06FF]/.test(prompt)) {
             return ctx.reply(
                 '⚠️ **پرامپت باید انگلیسی باشد!**\n\n' +
@@ -464,6 +513,16 @@ bot.on('text', async (ctx) => {
                 '✅ لطفاً توضیح عکس را به انگلیسی بنویسید.\n\n' +
                 '📝 مثال:\n' +
                 '`A dog astronaut on the moon`'
+            );
+        }
+        
+        // ====== چک کردن فیلتر اخلاقی ======
+        const safetyCheck = isPromptSafe(prompt);
+        if (!safetyCheck.safe) {
+            return ctx.reply(
+                `🚫 **پرامپت شما رد شد!**\n\n` +
+                `❌ دلیل: ${safetyCheck.reason}\n\n` +
+                `📌 لطفاً پرامپت مناسب‌تری بنویسید.`
             );
         }
         
