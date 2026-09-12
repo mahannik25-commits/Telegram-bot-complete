@@ -28,48 +28,42 @@ const PREMIUM_PRICE = 25000;
 
 // ==================== فیلتر اخلاقی ====================
 const FORBIDDEN_WORDS = [
-    // محتوای جنسی
     'sex', 'porn', 'nude', 'naked', 'xxx', 'nsfw', 'erotic', 'hentai',
     'boobs', 'breast', 'penis', 'vagina', 'dick', 'pussy', 'ass', 'anal',
-    // خشونت شدید
     'kill', 'murder', 'blood', 'gore', 'torture', 'beheading', 'suicide',
     'weapon', 'gun', 'rifle', 'bomb', 'explosion',
-    // نفرت‌پراکنی
     'racist', 'nazi', 'hitler', 'terrorist', 'isis', 'jihad',
-    // محتوای غیرقانونی
     'child porn', 'pedo', 'abuse', 'drugs', 'cocaine', 'heroin', 'meth',
-    // محتوای سیاسی حساس
     'khamenei', 'khomeini', 'iranian leader', 'dictator',
 ];
 
-function isPromptSafe(prompt, userId) {
-    const lowerPrompt = prompt.toLowerCase();
-
-    // ✅ ادمین اصلی (SUPER_ADMIN_ID) از فیلتر کلمات معاف است
-    if (userId !== SUPER_ADMIN_ID) {
-        for (const word of FORBIDDEN_WORDS) {
-            if (word.includes(' ')) {
-                if (lowerPrompt.includes(word)) {
-                    return { safe: false, reason: `محتوای نامناسب تشخیص داده شد.` };
-                }
-            } else {
-                const regex = new RegExp(`\\b${word}\\b`, 'i');
-                if (regex.test(lowerPrompt)) {
-                    return { safe: false, reason: `کلمه «${word}» مجاز نیست.` };
-                }
-            }
-        }
-    }
-
-    // این چک‌ها برای همه (حتی ادمین) اجرا می‌شه
+function isPromptSafe(prompt, userId = null) {
+    // چک‌های عمومی که برای همه اعمال میشه
     if (prompt.length > 500) {
         return { safe: false, reason: 'پرامپت خیلی طولانیه (حداکثر ۵۰۰ کاراکتر).' };
     }
-
     if (prompt.trim().length < 3) {
         return { safe: false, reason: 'پرامپت خیلی کوتاهه.' };
     }
 
+    // ✅ ادمین کل فیلتر کلمات رو دور می‌زنه
+    if (userId === SUPER_ADMIN_ID) {
+        return { safe: true };
+    }
+
+    const lowerPrompt = prompt.toLowerCase();
+    for (const word of FORBIDDEN_WORDS) {
+        if (word.includes(' ')) {
+            if (lowerPrompt.includes(word)) {
+                return { safe: false, reason: 'محتوای نامناسب تشخیص داده شد.' };
+            }
+        } else {
+            const regex = new RegExp(`\\b${word}\\b`, 'i');
+            if (regex.test(lowerPrompt)) {
+                return { safe: false, reason: `کلمه «${word}» مجاز نیست.` };
+            }
+        }
+    }
     return { safe: true };
 }
 
@@ -118,6 +112,7 @@ function mainMenu(userId) {
             Markup.button.callback('📷 خواندن QR ' + (isPremium(userId) ? '✅' : '🔒'), 'read_qr')
         ],
         [Markup.button.callback('🎨 تولید عکس با AI ' + (isPremium(userId) ? '✅' : '🔒'), 'ai_image')],
+        [Markup.button.callback('🎬 تولید ویدیو با AI ' + (isPremium(userId) ? '✅' : '🔒'), 'ai_video')],
     ];
 
     if (!isPremium(userId)) {
@@ -447,6 +442,19 @@ bot.action('ai_image', (ctx) => {
     );
 });
 
+bot.action('ai_video', (ctx) => {
+    if (!isPremium(ctx.from.id)) return ctx.answerCbQuery('❌ این قابلیت پولی است!', { show_alert: true });
+    userSessions.set(ctx.from.id, { mode: 'ai_video' });
+    ctx.reply(
+        '🎬 **پرامپت انگلیسی خود را برای ساخت ویدیو وارد کنید.**\n\n' +
+        '⚠️ فقط پرامپت انگلیسی پشتیبانی می‌شود.\n' +
+        '🚫 محتوای نامناسب رد خواهد شد.\n' +
+        '⏳ ساخت ویدیو ممکن است چند دقیقه طول بکشد.\n\n' +
+        '📝 مثال:\n' +
+        '`A majestic dragon soaring through clouds`'
+    );
+});
+
 bot.action(['support', 'feedback', 'report_bug'], (ctx) => {
     ctx.reply(`💬 آیدی پشتیبانی:\n${SUPPORT_ID}`);
     userSessions.delete(ctx.from.id);
@@ -497,14 +505,13 @@ bot.on('text', async (ctx) => {
         return;
     }
 
-    // --- تولید عکس با AI (با فیلتر اخلاقی) ---
+    // --- تولید عکس با AI ---
     if (session.mode === 'ai_image') {
         if (!isPremium(userId)) return ctx.reply('❌ این قابلیت پولی است!');
         
         const prompt = text.trim();
         if (!prompt) return ctx.reply('❌ لطفاً یک پرامپت بنویس.');
         
-        // چک کردن انگلیسی بودن
         if (/[\u0600-\u06FF]/.test(prompt)) {
             return ctx.reply(
                 '⚠️ **پرامپت باید انگلیسی باشد!**\n\n' +
@@ -515,7 +522,6 @@ bot.on('text', async (ctx) => {
             );
         }
         
-        // ====== چک کردن فیلتر اخلاقی (با پاس دادن userId) ======
         const safetyCheck = isPromptSafe(prompt, userId);
         if (!safetyCheck.safe) {
             return ctx.reply(
@@ -540,6 +546,52 @@ bot.on('text', async (ctx) => {
         } catch (error) {
             console.error('AI Image Error:', error);
             await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, undefined, '❌ خطا در ساخت تصویر. لطفاً دوباره تلاش کن.');
+            userSessions.delete(userId);
+        }
+        return;
+    }
+
+    // --- تولید ویدیو با AI ---
+    if (session.mode === 'ai_video') {
+        if (!isPremium(userId)) return ctx.reply('❌ این قابلیت پولی است!');
+        
+        const prompt = text.trim();
+        if (!prompt) return ctx.reply('❌ لطفاً یک پرامپت بنویس.');
+        
+        if (/[\u0600-\u06FF]/.test(prompt)) {
+            return ctx.reply(
+                '⚠️ **پرامپت باید انگلیسی باشد!**\n\n' +
+                '❌ پرامپت فارسی پشتیبانی نمی‌شود.\n' +
+                '✅ لطفاً توضیح ویدیو را به انگلیسی بنویسید.\n\n' +
+                '📝 مثال:\n' +
+                '`A majestic dragon soaring through clouds`'
+            );
+        }
+        
+        const safetyCheck = isPromptSafe(prompt, userId);
+        if (!safetyCheck.safe) {
+            return ctx.reply(
+                `🚫 **پرامپت شما رد شد!**\n\n` +
+                `❌ دلیل: ${safetyCheck.reason}\n\n` +
+                `📌 لطفاً پرامپت مناسب‌تری بنویسید.`
+            );
+        }
+        
+        const statusMsg = await ctx.reply('🎬 در حال ساخت ویدیو... (ممکنه چند دقیقه طول بکشه)');
+        
+        try {
+            const videoUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?model=seedance&nologo=true`;
+            
+            await ctx.replyWithVideo(
+                { url: videoUrl },
+                { caption: `🎬 **ویدیو ساخته شد!**\n\n📝 پرامپت: ${prompt}`, parse_mode: 'Markdown' }
+            );
+            
+            userSessions.delete(userId);
+            await ctx.telegram.deleteMessage(ctx.chat.id, statusMsg.message_id);
+        } catch (error) {
+            console.error('AI Video Error:', error);
+            await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, undefined, '❌ خطا در ساخت ویدیو. لطفاً دوباره تلاش کن.');
             userSessions.delete(userId);
         }
         return;
