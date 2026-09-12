@@ -444,7 +444,7 @@ bot.on('text', async (ctx) => {
         return;
     }
 
-    // --- تولید عکس با AI ---
+    // --- تولید عکس با AI (اصلاح‌شده) ---
     if (session.mode === 'ai_image') {
         if (!isPremium(userId)) return ctx.reply('❌ این قابلیت پولی است!');
         
@@ -454,12 +454,31 @@ bot.on('text', async (ctx) => {
         const statusMsg = await ctx.reply('🎨 در حال خلق تصویر... (ممکنه چند ثانیه طول بکشه)');
         
         try {
-            // استفاده از Pollinations.AI (رایگان و بدون API Key)
-            const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true`;
+            let englishPrompt = prompt;
+            
+            // ترجمه خودکار فارسی به انگلیسی
+            if (/[\u0600-\u06FF]/.test(prompt)) {
+                try {
+                    const translateResponse = await axios.get(
+                        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(prompt)}&langpair=fa|en`
+                    );
+                    if (translateResponse.data?.responseData?.translatedText) {
+                        englishPrompt = translateResponse.data.responseData.translatedText;
+                    }
+                } catch (e) {
+                    console.error('Translation error:', e);
+                }
+            }
+            
+            // ساخت URL با پارامترهای بهتر
+            const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(englishPrompt)}?width=1024&height=1024&nologo=true&enhance=true&model=flux`;
             
             await ctx.replyWithPhoto(
                 { url: imageUrl },
-                { caption: `🎨 **تصویر ساخته شد!**\n\n📝 توضیح: ${prompt}`, parse_mode: 'Markdown' }
+                { 
+                    caption: `🎨 **تصویر ساخته شد!**\n\n📝 توضیح شما: ${prompt}\n🇬🇧 ترجمه: ${englishPrompt}`, 
+                    parse_mode: 'Markdown' 
+                }
             );
             
             userSessions.delete(userId);
