@@ -505,23 +505,52 @@ bot.on('text', async (ctx) => {
         return;
     }
 
-    // --- تولید عکس با AI ---
-    if (session.mode === 'ai_image') {
-        if (!isPremium(userId)) return ctx.reply('❌ این قابلیت پولی است!');
+// --- تولید ویدیو با AI (اصلاح‌شده) ---
+if (session.mode === 'ai_video') {
+    if (!isPremium(userId)) return ctx.reply('❌ این قابلیت پولی است!');
+    
+    const prompt = text.trim();
+    if (!prompt) return ctx.reply('❌ لطفاً یک پرامپت بنویس.');
+    
+    if (/[\u0600-\u06FF]/.test(prompt)) {
+        return ctx.reply(
+            '⚠️ **پرامپت باید انگلیسی باشد!**\n\n' +
+            '❌ پرامپت فارسی پشتیبانی نمی‌شود.\n' +
+            '✅ لطفاً توضیح ویدیو را به انگلیسی بنویسید.\n\n' +
+            '📝 مثال:\n' +
+            '`A majestic dragon soaring through clouds`'
+        );
+    }
+    
+    const safetyCheck = isPromptSafe(prompt);
+    if (!safetyCheck.safe) {
+        return ctx.reply(
+            `🚫 **پرامپت شما رد شد!**\n\n` +
+            `❌ دلیل: ${safetyCheck.reason}\n\n` +
+            `📌 لطفاً پرامپت مناسب‌تری بنویسید.`
+        );
+    }
+    
+    const statusMsg = await ctx.reply('🎬 در حال ساخت ویدیو... (ممکنه چند دقیقه طول بکشه)');
+    
+    try {
+        // اضافه کردن پارامتر duration برای زمان ویدیو (۲ تا ۱۰ ثانیه)
+        const videoUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?model=seedance&duration=6&nologo=true`;
         
-        const prompt = text.trim();
-        if (!prompt) return ctx.reply('❌ لطفاً یک پرامپت بنویس.');
+        await ctx.replyWithVideo(
+            { url: videoUrl },
+            { caption: `🎬 **ویدیو ساخته شد!**\n\n📝 پرامپت: ${prompt}`, parse_mode: 'Markdown' }
+        );
         
-        if (/[\u0600-\u06FF]/.test(prompt)) {
-            return ctx.reply(
-                '⚠️ **پرامپت باید انگلیسی باشد!**\n\n' +
-                '❌ پرامپت فارسی پشتیبانی نمی‌شود.\n' +
-                '✅ لطفاً توضیح عکس را به انگلیسی بنویسید.\n\n' +
-                '📝 مثال:\n' +
-                '`A dog astronaut on the moon`'
-            );
+        userSessions.delete(userId);
+        await ctx.telegram.deleteMessage(ctx.chat.id, statusMsg.message_id);
+    } catch (error) {
+        console.error('AI Video Error:', error);
+        await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, undefined, '❌ خطا در ساخت ویدیو. لطفاً دوباره تلاش کن.');
+        userSessions.delete(userId);
+    }
+    return;
         }
-        
         const safetyCheck = isPromptSafe(prompt, userId);
         if (!safetyCheck.safe) {
             return ctx.reply(
