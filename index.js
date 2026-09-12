@@ -391,7 +391,7 @@ bot.action('read_qr', (ctx) => {
 bot.action('ai_image', (ctx) => {
     if (!isPremium(ctx.from.id)) return ctx.answerCbQuery('❌ این قابلیت پولی است!', { show_alert: true });
     userSessions.set(ctx.from.id, { mode: 'ai_image' });
-    ctx.reply('🎨 توضیح عکسی که می‌خوای ساخته بشه رو بنویس.\n\nمثال: «یک گربه فضانورد در مریخ»');
+    ctx.reply('🎨 توضیح عکسی که می‌خوای ساخته بشه رو بنویس (فارسی یا انگلیسی).\n\nمثال: «یک سگ فضانورد در ماه»');
 });
 
 bot.action(['support', 'feedback', 'report_bug'], (ctx) => {
@@ -444,23 +444,26 @@ bot.on('text', async (ctx) => {
         return;
     }
 
-    // --- تولید عکس با AI (اصلاح‌شده) ---
+    // --- تولید عکس با AI (نسخه اصلاح‌شده نهایی) ---
     if (session.mode === 'ai_image') {
         if (!isPremium(userId)) return ctx.reply('❌ این قابلیت پولی است!');
         
-        const prompt = text.trim();
-        if (!prompt) return ctx.reply('❌ لطفاً یک توضیح برای عکس بنویس.');
+        const originalPrompt = text.trim();
+        if (!originalPrompt) return ctx.reply('❌ لطفاً یک توضیح برای عکس بنویس.');
         
-        const statusMsg = await ctx.reply('🎨 در حال خلق تصویر... (ممکنه چند ثانیه طول بکشه)');
+        const statusMsg = await ctx.reply('🎨 در حال خلق تصویر...');
         
         try {
-            let englishPrompt = prompt;
+            let englishPrompt = originalPrompt;
+            let isTranslated = false;
             
-            // ترجمه خودکار فارسی به انگلیسی
-            if (/[\u0600-\u06FF]/.test(prompt)) {
+            // تشخیص فارسی بودن متن و ترجمه به انگلیسی
+            if (/[\u0600-\u06FF]/.test(originalPrompt)) {
+                isTranslated = true;
                 try {
                     const translateResponse = await axios.get(
-                        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(prompt)}&langpair=fa|en`
+                        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(originalPrompt)}&langpair=fa|en`,
+                        { timeout: 15000 }
                     );
                     if (translateResponse.data?.responseData?.translatedText) {
                         englishPrompt = translateResponse.data.responseData.translatedText;
@@ -470,15 +473,21 @@ bot.on('text', async (ctx) => {
                 }
             }
             
-            // ساخت URL با پارامترهای بهتر
+            // ساخت URL عکس با پارامترهای بهتر
             const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(englishPrompt)}?width=1024&height=1024&nologo=true&enhance=true&model=flux`;
+            
+            // ساخت کپشن
+            let caption = `🎨 **تصویر ساخته شد!**\n\n`;
+            if (isTranslated) {
+                caption += `📝 **پرامپت فارسی:**\n${originalPrompt}\n\n`;
+                caption += `🇬🇧 **ترجمه انگلیسی:**\n${englishPrompt}`;
+            } else {
+                caption += `📝 **پرامپت:**\n${originalPrompt}`;
+            }
             
             await ctx.replyWithPhoto(
                 { url: imageUrl },
-                { 
-                    caption: `🎨 **تصویر ساخته شد!**\n\n📝 توضیح شما: ${prompt}\n🇬🇧 ترجمه: ${englishPrompt}`, 
-                    parse_mode: 'Markdown' 
-                }
+                { caption: caption, parse_mode: 'Markdown' }
             );
             
             userSessions.delete(userId);
